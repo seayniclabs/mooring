@@ -18,13 +18,15 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -e ".[test]"
+        run: |
+          pip install -e ".[test]"
+          pip install pip-audit
 
       - name: Run tests
         run: pytest -v --cov=mooring --cov-report=xml --cov-fail-under=90
 
       - name: Security audit
-        run: pip audit
+        run: pip-audit
 
       - name: Leakage scan
         run: |
