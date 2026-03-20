@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mooring"
+version = "0.1.0"
+description = "Git and GitHub MCP server built with FastMCP"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+    "mcp[cli]",
+    "gitpython",
+    "pygithub",
+    "httpx",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pytest-cov",
+    "pytest-asyncio",
+    "responses",
+    "pip-audit",
+]
+
+[project.scripts]
+mooring = "mooring.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mooring"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
