@@ -6,8 +6,23 @@ build-backend = "hatchling.build"
 name = "mooring"
 version = "0.1.0"
 description = "Git and GitHub MCP server built with FastMCP"
+readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Seaynic Labs", email = "hello@seayniclabs.com" },
+]
+keywords = ["mcp", "git", "github", "ai", "model-context-protocol"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Version Control :: Git",
+]
 dependencies = [
     "mcp[cli]",
     "gitpython",
@@ -23,6 +38,11 @@ test = [
     "responses",
     "pip-audit",
 ]
+
+[project.urls]
+Homepage = "https://github.com/seayniclabs/mooring"
+Repository = "https://github.com/seayniclabs/mooring"
+Issues = "https://github.com/seayniclabs/mooring/issues"
 
 [project.scripts]
 mooring = "mooring.server:main"
