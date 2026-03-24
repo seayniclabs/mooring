@@ -43,10 +43,10 @@ Mooring is an [MCP](https://modelcontextprotocol.io/) server that gives AI assis
 
 ```bash
 # PyPI
-pip install mooring
+pip install mooring-mcp
 
 # Isolated install
-pipx install mooring
+pipx install mooring-mcp
 ```
 
 ---
