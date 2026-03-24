@@ -4,6 +4,7 @@ All functions take a repo_path string and return structured data.
 No subprocess calls — GitPython API only.
 """
 
+import re
 from pathlib import Path
 
 import git
@@ -29,10 +30,20 @@ def _open_repo(repo_path: str) -> git.Repo:
 def _validate_file_in_repo(repo: git.Repo, file_path: str) -> Path:
     """Validate that file_path is within the repo working directory.
 
-    Prevents path traversal attacks (e.g., ../../etc/passwd).
+    Prevents path traversal attacks (e.g., ../../etc/passwd) and
+    symlink escapes (symlinks pointing outside the repository).
     """
     repo_root = Path(repo.working_dir).resolve()
-    target = (repo_root / file_path).resolve()
+    # Build the candidate path without resolving symlinks first
+    candidate = (repo_root / file_path)
+    # Check if any component is a symlink pointing outside the repo
+    if candidate.is_symlink():
+        link_target = candidate.resolve()
+        if not str(link_target).startswith(str(repo_root)):
+            raise GitOpsError(
+                f"Path traversal rejected: {file_path} is a symlink that resolves outside the repository"
+            )
+    target = candidate.resolve()
     if not str(target).startswith(str(repo_root)):
         raise GitOpsError(
             f"Path traversal rejected: {file_path} resolves outside the repository"
@@ -40,6 +51,25 @@ def _validate_file_in_repo(repo: git.Repo, file_path: str) -> Path:
     if not target.exists():
         raise GitOpsError(f"File does not exist: {file_path}")
     return target
+
+
+_SAFE_REF_PATTERN = re.compile(r"^[A-Za-z0-9_./:@\-^~]+$")
+
+
+def _validate_ref(repo: git.Repo, ref: str) -> None:
+    """Validate that a ref is safe and exists in the repository.
+
+    Checks for shell metacharacters first, then verifies the ref
+    resolves to a valid git object (branch, tag, or commit SHA).
+    """
+    if not ref or not _SAFE_REF_PATTERN.match(ref):
+        raise GitOpsError(
+            f"Invalid ref: {ref!r} — contains disallowed characters"
+        )
+    try:
+        repo.git.rev_parse("--verify", ref)
+    except git.GitCommandError:
+        raise GitOpsError(f"Ref does not exist: {ref!r}")
 
 
 def repo_status(repo_path: str) -> dict:
@@ -144,6 +174,11 @@ def repo_diff(
 ) -> str:
     """Unified diff output."""
     repo = _open_repo(repo_path)
+
+    if from_ref:
+        _validate_ref(repo, from_ref)
+    if to_ref:
+        _validate_ref(repo, to_ref)
 
     if from_ref and to_ref:
         return repo.git.diff(from_ref, to_ref)

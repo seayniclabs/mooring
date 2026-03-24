@@ -9,6 +9,7 @@ from mooring.github_ops import (
     GitHubOpsError,
     _handle_rate_limit,
     _safe_error,
+    _validate_repo_format,
     gh_actions,
     gh_issues,
     gh_pr_create,
@@ -428,3 +429,154 @@ class TestTokenNotExposed:
         result = _safe_error(exc)
         assert token not in result
         assert "***" in result
+
+
+class TestTokenPatternMasking:
+    """Test that _safe_error masks GitHub token patterns via regex."""
+
+    def test_masks_ghp_pattern(self):
+        token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
+        exc = Exception(f"Error with token {token} in message")
+        result = _safe_error(exc)
+        assert token not in result
+        assert "***" in result
+
+    def test_masks_gho_pattern(self):
+        token = "gho_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
+        exc = Exception(f"Failed auth: {token}")
+        result = _safe_error(exc)
+        assert token not in result
+        assert "***" in result
+
+    def test_masks_github_pat_pattern(self):
+        token = "github_pat_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
+        exc = Exception(f"Token leaked: {token}")
+        result = _safe_error(exc)
+        assert token not in result
+        assert "***" in result
+
+    def test_masks_multiple_tokens(self):
+        t1 = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        t2 = "gho_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+        exc = Exception(f"Tokens: {t1} and {t2}")
+        result = _safe_error(exc)
+        assert t1 not in result
+        assert t2 not in result
+
+    def test_no_false_positive_short_prefix(self):
+        """Short strings like 'ghp_abc' should not be masked (too short for real token)."""
+        exc = Exception("Error with ghp_abc in text")
+        result = _safe_error(exc)
+        # ghp_abc is only 7 chars after prefix — real tokens are 36+
+        assert "ghp_abc" in result
+
+
+class TestRepoFormatValidation:
+    """Test that malformed repo strings are rejected."""
+
+    def test_valid_format(self):
+        # Should not raise
+        _validate_repo_format("owner/repo")
+
+    def test_missing_slash(self, mock_github_token):
+        with pytest.raises(GitHubOpsError, match="Invalid repository format"):
+            _validate_repo_format("ownerrepo")
+
+    def test_empty_string(self, mock_github_token):
+        with pytest.raises(GitHubOpsError, match="Invalid repository format"):
+            _validate_repo_format("")
+
+    def test_multiple_slashes(self, mock_github_token):
+        with pytest.raises(GitHubOpsError, match="Invalid repository format"):
+            _validate_repo_format("owner/repo/extra")
+
+    def test_empty_owner(self, mock_github_token):
+        with pytest.raises(GitHubOpsError, match="Invalid repository format"):
+            _validate_repo_format("/repo")
+
+    def test_empty_name(self, mock_github_token):
+        with pytest.raises(GitHubOpsError, match="Invalid repository format"):
+            _validate_repo_format("owner/")
+
+    def test_gh_pr_list_rejects_bad_format(self, mock_github_token):
+        with pytest.raises(GitHubOpsError, match="Invalid repository format"):
+            gh_pr_list("not-a-repo")
+
+    def test_gh_issues_rejects_bad_format(self, mock_github_token):
+        with pytest.raises(GitHubOpsError, match="Invalid repository format"):
+            gh_issues("badformat")
+
+    def test_gh_actions_rejects_bad_format(self, mock_github_token):
+        with pytest.raises(GitHubOpsError, match="Invalid repository format"):
+            gh_actions("no-slash")
+
+
+class TestPrDetailWithContent:
+    """Test PR detail with populated reviews, comments, and check runs."""
+
+    @patch("mooring.github_ops._get_client")
+    def test_pr_with_reviews_comments_checks(self, mock_client, mock_github_token):
+        # Build review mock
+        review = MagicMock()
+        review.user = _make_user("reviewer1")
+        review.state = "APPROVED"
+        review.submitted_at = datetime(2025, 1, 3, tzinfo=timezone.utc)
+
+        # Build comment mock
+        comment = MagicMock()
+        comment.user = _make_user("commenter1")
+        comment.body = "Looks good!"
+        comment.created_at = datetime(2025, 1, 4, tzinfo=timezone.utc)
+
+        # Build check run mock
+        check_run = MagicMock()
+        check_run.name = "CI / test"
+        check_run.status = "completed"
+        check_run.conclusion = "success"
+
+        # Build commit mock for check runs
+        mock_commit = MagicMock()
+        mock_commit.get_check_runs.return_value = [check_run]
+
+        # Build PR mock
+        mock_pr = MagicMock()
+        mock_pr.number = 99
+        mock_pr.title = "Full PR"
+        mock_pr.body = "Detailed description"
+        mock_pr.state = "open"
+        mock_pr.merged = False
+        mock_pr.mergeable = True
+        mock_pr.additions = 50
+        mock_pr.deletions = 10
+        mock_pr.changed_files = 5
+        mock_pr.commits = 2
+        mock_pr.html_url = "https://github.com/owner/repo/pull/99"
+        mock_pr.user = _make_user("author1")
+        mock_pr.labels = [_make_label("feature"), _make_label("ready")]
+        mock_pr.get_reviews.return_value = [review]
+        mock_pr.get_issue_comments.return_value = [comment]
+        mock_pr.get_commits.return_value.reversed = [mock_commit]
+
+        mock_repo = MagicMock()
+        mock_repo.get_pull.return_value = mock_pr
+        mock_client.return_value.get_repo.return_value = mock_repo
+
+        result = gh_pr_detail("owner/repo", 99)
+
+        # Verify reviews
+        assert len(result["reviews"]) == 1
+        assert result["reviews"][0]["user"] == "reviewer1"
+        assert result["reviews"][0]["state"] == "APPROVED"
+
+        # Verify comments
+        assert len(result["comments"]) == 1
+        assert result["comments"][0]["user"] == "commenter1"
+        assert result["comments"][0]["body"] == "Looks good!"
+
+        # Verify checks
+        assert len(result["checks"]) == 1
+        assert result["checks"][0]["name"] == "CI / test"
+        assert result["checks"][0]["conclusion"] == "success"
+
+        # Verify labels
+        assert result["labels"] == ["feature", "ready"]

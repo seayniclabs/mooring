@@ -5,8 +5,14 @@ Token is never logged or included in output.
 """
 
 import os
+import re
 
 from github import Auth, Github, GithubException, RateLimitExceededException
+
+# Patterns for GitHub token formats that should be masked in error output
+_TOKEN_PATTERNS = re.compile(
+    r"(ghp_[A-Za-z0-9]{36,}|gho_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})"
+)
 
 
 class GitHubOpsError(Exception):
@@ -24,12 +30,35 @@ def _get_client() -> Github:
     return Github(auth=Auth.Token(token))
 
 
+def _validate_repo_format(repo: str) -> None:
+    """Validate that repo string is in owner/name format.
+
+    Rejects empty strings, strings without exactly one slash,
+    and strings with empty owner or name components.
+    """
+    if not repo or "/" not in repo:
+        raise GitHubOpsError(
+            f"Invalid repository format: {repo!r} — expected 'owner/name'"
+        )
+    parts = repo.split("/")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise GitHubOpsError(
+            f"Invalid repository format: {repo!r} — expected 'owner/name'"
+        )
+
+
 def _safe_error(exc: Exception) -> str:
-    """Return error message with any token values masked."""
+    """Return error message with any token values masked.
+
+    Masks both the exact GITHUB_TOKEN value and any strings matching
+    known GitHub token patterns (ghp_*, gho_*, github_pat_*).
+    """
     msg = str(exc)
     token = os.environ.get("GITHUB_TOKEN", "")
     if token and token in msg:
         msg = msg.replace(token, "***")
+    # Also mask any GitHub token patterns that may appear
+    msg = _TOKEN_PATTERNS.sub("***", msg)
     return msg
 
 
@@ -50,6 +79,7 @@ def gh_pr_list(
     label: str | None = None,
 ) -> list[dict]:
     """List pull requests."""
+    _validate_repo_format(repo)
     client = _get_client()
     try:
         gh_repo = client.get_repo(repo)
@@ -86,6 +116,7 @@ def gh_pr_list(
 
 def gh_pr_detail(repo: str, number: int) -> dict:
     """Get detailed PR information."""
+    _validate_repo_format(repo)
     client = _get_client()
     try:
         gh_repo = client.get_repo(repo)
@@ -157,6 +188,7 @@ def gh_pr_create(
     reviewers: list[str] | None = None,
 ) -> dict:
     """Create a pull request."""
+    _validate_repo_format(repo)
     client = _get_client()
     try:
         gh_repo = client.get_repo(repo)
@@ -189,6 +221,7 @@ def gh_issues(
     number: int | None = None,
 ) -> list[dict] | dict:
     """List, create, or update issues."""
+    _validate_repo_format(repo)
     client = _get_client()
     try:
         gh_repo = client.get_repo(repo)
@@ -260,6 +293,7 @@ def gh_actions(
     status: str | None = None,
 ) -> list[dict]:
     """List recent workflow runs."""
+    _validate_repo_format(repo)
     client = _get_client()
     try:
         gh_repo = client.get_repo(repo)

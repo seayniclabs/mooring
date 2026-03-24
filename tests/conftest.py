@@ -70,6 +70,17 @@ def dirty_repo(test_repo):
 
 
 @pytest.fixture
+def detached_repo(test_repo):
+    """A repo in detached HEAD state (checked out to a specific commit hash)."""
+    commit_sha = test_repo.head.commit.hexsha
+    test_repo.head.reference = test_repo.head.commit
+    # Detach HEAD by checking out the commit directly
+    test_repo.git.checkout(commit_sha)
+    assert test_repo.head.is_detached
+    return test_repo
+
+
+@pytest.fixture
 def mock_github_token(monkeypatch):
     """Set a fake GitHub token for tests that check auth."""
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_FAKE_TOKEN_FOR_TESTING_ONLY")

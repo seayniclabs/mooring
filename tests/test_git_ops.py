@@ -1,9 +1,13 @@
 """Tests for local git operations using conftest fixtures."""
 
+import os
+from pathlib import Path
+
 import pytest
 
 from mooring.git_ops import (
     GitOpsError,
+    _validate_ref,
     repo_blame,
     repo_branches,
     repo_diff,
@@ -225,3 +229,98 @@ class TestRepoStash:
     def test_invalid_action(self, test_repo):
         with pytest.raises(GitOpsError, match="Unknown stash action"):
             repo_stash(test_repo.working_dir, action="invalid")
+
+
+class TestSymlinkEscape:
+    def test_symlink_outside_repo_rejected(self, test_repo):
+        """Symlink inside repo pointing to a file outside must be rejected."""
+        workdir = Path(test_repo.working_dir)
+        # Create a file outside the repo
+        outside_file = workdir.parent / "outside-secret.txt"
+        outside_file.write_text("sensitive data\n")
+
+        # Create a symlink inside the repo pointing outside
+        symlink_path = workdir / "sneaky-link.txt"
+        symlink_path.symlink_to(outside_file)
+
+        with pytest.raises(GitOpsError, match="Path traversal rejected"):
+            repo_blame(test_repo.working_dir, "sneaky-link.txt")
+
+    def test_symlink_inside_repo_allowed(self, test_repo):
+        """Symlink pointing to a file inside the repo should pass validation."""
+        from mooring.git_ops import _open_repo, _validate_file_in_repo
+
+        workdir = Path(test_repo.working_dir)
+        symlink_path = workdir / "readme-link.md"
+        symlink_path.symlink_to(workdir / "README.md")
+
+        repo = _open_repo(test_repo.working_dir)
+        # Should not raise — the symlink target is inside the repo
+        result = _validate_file_in_repo(repo, "readme-link.md")
+        assert result.exists()
+
+
+class TestRefValidation:
+    def test_nonexistent_ref_rejected(self, test_repo):
+        with pytest.raises(GitOpsError, match="Ref does not exist"):
+            repo_diff(test_repo.working_dir, from_ref="nonexistent-branch", to_ref="main")
+
+    def test_shell_metacharacters_rejected(self, test_repo):
+        with pytest.raises(GitOpsError, match="disallowed characters"):
+            repo_diff(test_repo.working_dir, from_ref="main; rm -rf /", to_ref="main")
+
+    def test_ref_with_spaces_rejected(self, test_repo):
+        with pytest.raises(GitOpsError, match="disallowed characters"):
+            repo_diff(test_repo.working_dir, from_ref="main branch", to_ref="main")
+
+    def test_ref_with_pipe_rejected(self, test_repo):
+        with pytest.raises(GitOpsError, match="disallowed characters"):
+            repo_diff(test_repo.working_dir, from_ref="main|cat /etc/passwd", to_ref="main")
+
+    def test_ref_with_backtick_rejected(self, test_repo):
+        with pytest.raises(GitOpsError, match="disallowed characters"):
+            repo_diff(test_repo.working_dir, from_ref="`whoami`", to_ref="main")
+
+    def test_valid_branch_refs_accepted(self, test_repo):
+        # Should not raise — both are real branches
+        result = repo_diff(test_repo.working_dir, from_ref="main", to_ref="feature/add-tests")
+        assert isinstance(result, str)
+
+    def test_valid_head_tilde_ref(self, test_repo):
+        # HEAD~1 is a valid ref syntax
+        result = repo_diff(test_repo.working_dir, from_ref="HEAD~1")
+        assert isinstance(result, str)
+
+    def test_to_ref_only_nonexistent(self, test_repo):
+        """to_ref without from_ref — to_ref is still validated."""
+        with pytest.raises(GitOpsError, match="Ref does not exist"):
+            repo_diff(test_repo.working_dir, from_ref="main", to_ref="does-not-exist")
+
+    def test_validate_ref_directly(self, test_repo):
+        """Test _validate_ref helper directly."""
+        from mooring.git_ops import _open_repo
+        repo = _open_repo(test_repo.working_dir)
+        # Valid ref should not raise
+        _validate_ref(repo, "main")
+        # Invalid ref should raise
+        with pytest.raises(GitOpsError):
+            _validate_ref(repo, "no-such-ref-ever")
+
+
+class TestDetachedHead:
+    def test_repo_status_detached(self, detached_repo):
+        result = repo_status(detached_repo.working_dir)
+        assert result["branch"] == "HEAD (detached)"
+        # Should still return valid structure
+        assert "staged" in result
+        assert "unstaged" in result
+        assert "untracked" in result
+
+    def test_repo_branches_detached(self, detached_repo):
+        result = repo_branches(detached_repo.working_dir)
+        # No branch should be marked current in detached state
+        current = [b for b in result if b["is_current"]]
+        assert len(current) == 0
+        # Branches should still be listed
+        names = [b["name"] for b in result]
+        assert "main" in names
