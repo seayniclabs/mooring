@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.seayniclabs/mooring",
+  "title": "Mooring",
+  "description": "Git and GitHub operations — repo status, diffs, branches, PRs, issues, and Actions.",
+  "repository": {
+    "url": "https://github.com/seayniclabs/mooring",
+    "source": "github"
+  },
+  "version": "0.1.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "mooring-mcp",
+      "version": "0.1.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
